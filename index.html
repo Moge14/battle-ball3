@@ -1,111 +1,376 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Battle Ball Online</title>
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <title>Battle Ball 3D: Rocket Arena</title>
     <style>
-        body { 
-            text-align: center; 
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
-            background: #1a1a1a; 
+        body { margin: 0; overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        canvas { display: block; }
+        #overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
             color: white;
-        }
-        canvas { 
-            border: 4px solid #444; 
-            background: #222; 
-            box-shadow: 0 0 20px rgba(0,0,0,0.5);
-            display: block; 
-            margin: 20px auto; 
+            background: rgba(0, 0, 0, 0.6);
+            padding: 10px 15px;
             border-radius: 8px;
+            font-size: 1.1em;
+            pointer-events: none; /* Allows clicks to pass through */
+            z-index: 10;
         }
-        #status { font-weight: bold; margin-top: 10px; }
-        .controls { color: #888; font-size: 0.9em; }
+        #instructions {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: #ccc;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 8px 15px;
+            border-radius: 5px;
+            font-size: 0.9em;
+            pointer-events: none;
+            z-index: 10;
+        }
     </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
+    <script src="https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.min.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
-    <h1>BATTLE BALL 3</h1>
-    <div id="status">Connecting to Render server...</div>
-    <canvas id="gameCanvas" width="800" height="500"></canvas>
-    <p class="controls">Use <b>Arrow Keys</b> to move your ball</p>
+    <div id="overlay">
+        <div id="playerStatus">Connecting...</div>
+        <div id="ballCamStatus">Ball Cam: OFF</div>
+    </div>
+    <div id="instructions">
+        WASD: Drive | Space: Jump | Shift: Boost | Q/E: Flip/Roll | T: Respawn | E: Toggle Ball Cam
+    </div>
 
-    <script>
-        const status = document.getElementById("status");
-        const canvas = document.getElementById("gameCanvas");
-        const ctx = canvas.getContext("2d");
+<script>
+    // --- SCENE SETUP ---
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
 
-        // --- THE CONNECTION ---
-        const socket = io("https://battle-ball-3.onrender.com");
+    // --- PHYSICS WORLD (CANNON.js) ---
+    const world = new CANNON.World();
+    world.gravity.set(0, -9.82, 0); // Standard Earth gravity
+    world.broadphase = new CANNON.SAPBroadphase(world); // Optimize collision detection
+    world.allowSleep = true; // Objects can "sleep" to save CPU
 
-        let players = {};
-        let myId = null;
-        let myPos = { x: 400, y: 250 };
+    // --- LIGHTING ---
+    const ambientLight = new THREE.AmbientLight(0x404040, 1);
+    scene.add(ambientLight);
+    const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+    dirLight.position.set(20, 30, 10);
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 0.5;
+    dirLight.shadow.camera.far = 100;
+    dirLight.shadow.camera.left = -50;
+    dirLight.shadow.camera.right = 50;
+    dirLight.shadow.camera.top = 50;
+    dirLight.shadow.camera.bottom = -50;
+    scene.add(dirLight);
 
-        socket.on("connect", () => {
-            myId = socket.id;
-            status.innerText = "✅ ONLINE: Connected as " + myId.substring(0, 5);
-            status.style.color = "#4CAF50";
+    // --- ARENA / GROUND ---
+    const groundMaterial = new CANNON.Material("groundMaterial");
+    const groundShape = new CANNON.Plane();
+    const groundBody = new CANNON.Body({ mass: 0, material: groundMaterial });
+    groundBody.addShape(groundShape);
+    groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0); // Rotate to be flat
+    world.addBody(groundBody);
+
+    const groundMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(200, 200),
+        new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.8, metalness: 0.1 })
+    );
+    groundMesh.receiveShadow = true;
+    groundMesh.rotation.x = -Math.PI / 2;
+    scene.add(groundMesh);
+
+    // --- GAME OBJECTS ---
+    const gameObjects = {}; // Stores all cars and the ball (both THREE.Mesh and CANNON.Body)
+    let myId = null;
+    let myCarBody = null; // Our car's physics body
+    let myCarMesh = null; // Our car's 3D mesh
+
+    // The Game Ball
+    const ballRadius = 2;
+    const ballMass = 10;
+    const ballMaterial = new CANNON.Material("ballMaterial");
+    const ballShape = new CANNON.Sphere(ballRadius);
+    const ballBody = new CANNON.Body({ mass: ballMass, material: ballMaterial });
+    ballBody.addShape(ballShape);
+    ballBody.position.set(0, ballRadius + 0.1, 0);
+    world.addBody(ballBody);
+    
+    const ballMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(ballRadius, 32, 32),
+        new THREE.MeshStandardMaterial({ color: 0xff4500, roughness: 0.4, metalness: 0.2 })
+    );
+    ballMesh.castShadow = true;
+    scene.add(ballMesh);
+    gameObjects['ball'] = { body: ballBody, mesh: ballMesh };
+
+    // --- PHYSICS MATERIALS (for realistic collisions) ---
+    const carMaterial = new CANNON.Material("carMaterial");
+    const ballGroundContact = new CANNON.ContactMaterial(ballMaterial, groundMaterial, {
+        friction: 0.6,
+        restitution: 0.7 // Bounciness
+    });
+    const carGroundContact = new CANNON.ContactMaterial(carMaterial, groundMaterial, {
+        friction: 0.8,
+        restitution: 0.1
+    });
+    const carBallContact = new CANNON.ContactMaterial(carMaterial, ballMaterial, {
+        friction: 0.1,
+        restitution: 0.9 // Car kicking ball
+    });
+    world.addContactMaterial(ballGroundContact);
+    world.addContactMaterial(carGroundContact);
+    world.addContactMaterial(carBallContact);
+
+    // --- CAR CREATION FUNCTION ---
+    function createCar(id, color = 0x007bff) {
+        const carWidth = 2, carHeight = 1, carLength = 4;
+        const carShape = new CANNON.Box(new CANNON.Vec3(carWidth/2, carHeight/2, carLength/2));
+        const carBody = new CANNON.Body({ mass: 10, material: carMaterial });
+        carBody.addShape(carShape);
+        carBody.linearDamping = 0.5; // Reduces sliding
+        carBody.angularDamping = 0.8; // Reduces spinning
+        carBody.position.set(Math.random() * 20 - 10, 5, Math.random() * 20 - 10);
+        world.addBody(carBody);
+
+        const carMesh = new THREE.Mesh(
+            new THREE.BoxGeometry(carWidth, carHeight, carLength),
+            new THREE.MeshStandardMaterial({ color: color, roughness: 0.5, metalness: 0.1 })
+        );
+        carMesh.castShadow = true;
+        scene.add(carMesh);
+
+        gameObjects[id] = { body: carBody, mesh: carMesh };
+        return { body: carBody, mesh: carMesh };
+    }
+
+    // --- NETWORK (SOCKET.IO) ---
+    const socket = io("https://battle-ball-3.onrender.com", { transports: ["websocket"] });
+    const playerStatusDiv = document.getElementById("playerStatus");
+
+    socket.on("connect", () => {
+        myId = socket.id;
+        playerStatusDiv.textContent = `Player: ${myId.substring(0, 6)}`;
+        playerStatusDiv.style.color = "#4CAF50";
+        // Create our own car once connected
+        const { body, mesh } = createCar(myId, 0x007bff); // Blue for player
+        myCarBody = body;
+        myCarMesh = mesh;
+    });
+
+    socket.on("player_connected", (id) => {
+        if (!gameObjects[id] && id !== myId) {
+            console.log(`Player connected: ${id}`);
+            createCar(id, 0xff0000); // Red for opponents
+        }
+    });
+
+    socket.on("player_moved", (data) => {
+        const obj = gameObjects[data.id];
+        if (obj && obj.body) {
+            obj.body.position.set(data.pos.x, data.pos.y, data.pos.z);
+            obj.body.quaternion.set(data.quat.x, data.quat.y, data.quat.z, data.quat.w);
+            obj.body.velocity.set(data.vel.x, data.vel.y, data.vel.z);
+            obj.body.angularVelocity.set(data.avel.x, data.avel.y, data.avel.z);
+        }
+    });
+
+    socket.on("ball_moved", (data) => {
+        ballBody.position.set(data.pos.x, data.pos.y, data.pos.z);
+        ballBody.velocity.set(data.vel.x, data.vel.y, data.vel.z);
+        ballBody.angularVelocity.set(data.avel.x, data.avel.y, data.avel.z);
+    });
+
+    socket.on("player_disconnected", (id) => {
+        const obj = gameObjects[id];
+        if (obj) {
+            world.removeBody(obj.body);
+            scene.remove(obj.mesh);
+            delete gameObjects[id];
+            console.log(`Player disconnected: ${id}`);
+        }
+    });
+
+    // --- INPUT HANDLING ---
+    const keys = {};
+    window.addEventListener('keydown', (e) => {
+        keys[e.key] = true;
+        if (e.key === 'e' || e.key === 'E') toggleBallCam();
+        if (e.key === 't' || e.key === 'T') respawnMyCar();
+    });
+    window.addEventListener('keyup', (e) => keys[e.key] = false);
+
+    // --- CAR CONTROL ---
+    const driveForce = 150;
+    const boostForce = 300;
+    const jumpForce = 350;
+    const flipTorque = 1000;
+    const turnTorque = 60;
+    let canJump = true; // Prevents spam jumping
+    let lastFlipTime = 0;
+    const flipCooldown = 500; // ms
+
+    function applyCarControls() {
+        if (!myCarBody) return;
+
+        const forward = new CANNON.Vec3(0, 0, 1);
+        myCarBody.quaternion.vmult(forward, forward); // Get car's forward direction
+
+        // Drive (WASD)
+        let currentDriveForce = keys['Shift'] ? boostForce : driveForce;
+        if (keys['w'] || keys['W']) myCarBody.applyForce(forward.scale(currentDriveForce), myCarBody.position);
+        if (keys['s'] || keys['S']) myCarBody.applyForce(forward.scale(-currentDriveForce), myCarBody.position);
+
+        // Turn (Left/Right)
+        if (keys['a'] || keys['A']) myCarBody.applyTorque(new CANNON.Vec3(0, turnTorque, 0));
+        if (keys['d'] || keys['D']) myCarBody.applyTorque(new CANNON.Vec3(0, -turnTorque, 0));
+        
+        // Jump (Space) - Basic ground check
+        if (keys[' '] && canJump) {
+            myCarBody.applyImpulse(new CANNON.Vec3(0, jumpForce, 0), myCarBody.position);
+            canJump = false; // Disable jumping until landing
+        }
+
+        // Check if car is on ground
+        myCarBody.addEventListener('collide', (e) => {
+            if (e.body === groundBody) {
+                canJump = true;
+            }
         });
 
-        socket.on("connect_error", () => {
-            status.innerText = "❌ Offline: Waiting for Render to wake up...";
-            status.style.color = "#f44336";
-        });
+        // Flip (Q/E) - Horizontal roll
+        const now = performance.now();
+        if ((keys['q'] || keys['Q'] || keys['e'] || keys['E']) && (now - lastFlipTime > flipCooldown)) {
+             const sideAxis = new CANNON.Vec3(1, 0, 0); // Roll around X-axis
+             myCarBody.quaternion.vmult(sideAxis, sideAxis); // Get car's side direction
 
-        // Listen for other players moving
-        socket.on("player_moved", (data) => {
-            players[data.id] = { x: data.x, y: data.y };
-            requestAnimationFrame(draw);
-        });
+             if (keys['q'] || keys['Q']) myCarBody.applyTorque(sideAxis.scale(flipTorque));
+             if (keys['e'] || keys['E']) myCarBody.applyTorque(sideAxis.scale(-flipTorque));
+             lastFlipTime = now;
+        }
+    }
 
-        function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+    function respawnMyCar() {
+        if (myCarBody) {
+            myCarBody.position.set(Math.random() * 30 - 15, 5, Math.random() * 30 - 15);
+            myCarBody.quaternion.set(0,0,0,1); // Reset rotation
+            myCarBody.velocity.set(0,0,0);
+            myCarBody.angularVelocity.set(0,0,0);
+        }
+        ballBody.position.set(0, ballRadius + 0.1, 0); // Reset ball too
+        ballBody.velocity.set(0,0,0);
+        ballBody.angularVelocity.set(0,0,0);
+    }
+
+    // --- CAMERA LOGIC ---
+    let isBallCam = false;
+    const ballCamStatusDiv = document.getElementById("ballCamStatus");
+    const cameraOffset = new THREE.Vector3(-10, 8, 15); // Behind and above car
+    const ballCamOffset = new THREE.Vector3(0, 10, -20); // From ball, looking at player
+
+    function updateCamera() {
+        if (!myCarMesh || !ballMesh) return;
+
+        if (isBallCam) {
+            // Ball Cam: Camera behind YOUR car, looking at the ball
+            const targetPosition = new THREE.Vector3();
+            myCarMesh.getWorldPosition(targetPosition); // Get car's world position
+
+            const cameraTarget = ballMesh.position; // Look at the ball
             
-            // Draw Grid (optional, makes movement feel better)
-            ctx.strokeStyle = "#333";
-            for(let i=0; i<canvas.width; i+=50) { ctx.strokeRect(i, 0, 50, canvas.height); }
+            // Calculate camera position to be behind car
+            const idealOffset = new THREE.Vector3().copy(ballCamOffset);
+            idealOffset.applyQuaternion(myCarMesh.ququaternion); // Rotate offset with car's rotation
+            idealOffset.add(targetPosition);
 
-            // Draw ME (Green)
-            drawBall(myPos.x, myPos.y, "#4CAF50", "YOU");
+            camera.position.lerp(idealOffset, 0.1); // Smooth camera movement
+            camera.lookAt(cameraTarget);
+            
+        } else {
+            // Car Cam: Camera behind and slightly above your car
+            const targetPosition = new THREE.Vector3();
+            myCarMesh.getWorldPosition(targetPosition);
 
-            // Draw OTHERS (Red)
-            for (let id in players) {
-                if (id !== myId) {
-                    drawBall(players[id].x, players[id].y, "#f44336", id.substring(0,4));
-                }
+            const idealOffset = new THREE.Vector3().copy(cameraOffset);
+            idealOffset.applyQuaternion(myCarMesh.quaternion); // Rotate offset with car's rotation
+            idealOffset.add(targetPosition);
+
+            camera.position.lerp(idealOffset, 0.1); // Smooth camera movement
+            camera.lookAt(targetPosition);
+        }
+    }
+
+    function toggleBallCam() {
+        isBallCam = !isBallCam;
+        ballCamStatusDiv.textContent = `Ball Cam: ${isBallCam ? 'ON' : 'OFF'}`;
+        console.log(`Ball Cam: ${isBallCam ? 'ON' : 'OFF'}`);
+    }
+
+    // --- ANIMATION LOOP ---
+    const fixedTimeStep = 1 / 60; // physics updates at 60fps
+    let lastTime;
+
+    function animate(time) {
+        requestAnimationFrame(animate);
+
+        if (lastTime !== undefined) {
+            const dt = (time - lastTime) / 1000;
+            world.step(fixedTimeStep, dt, 10); // Update physics
+        }
+        lastTime = time;
+
+        // Sync Cannon.js bodies with Three.js meshes
+        for (const id in gameObjects) {
+            const obj = gameObjects[id];
+            if (obj.body && obj.mesh) {
+                obj.mesh.position.copy(obj.body.position);
+                obj.mesh.quaternion.copy(obj.body.quaternion);
             }
         }
 
-        function drawBall(x, y, color, label) {
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(x, y, 20, 0, Math.PI * 2);
-            ctx.fill();
-            
-            ctx.fillStyle = "white";
-            ctx.font = "12px Arial";
-            ctx.fillText(label, x - 12, y - 25);
+        applyCarControls();
+        updateCamera();
+
+        // Send our car's state to the server
+        if (myCarBody) {
+            socket.emit("move", {
+                pos: myCarBody.position,
+                quat: myCarBody.quaternion,
+                vel: myCarBody.velocity,
+                avel: myCarBody.angularVelocity
+            });
+        }
+        // Send ball state (only if we're the "host" for now, or a dedicated server later)
+        if (myId === socket.id) { // This is a simple way for one client to send ball data
+             socket.emit("ball_move", {
+                pos: ballBody.position,
+                vel: ballBody.velocity,
+                avel: ballBody.angularVelocity
+             });
         }
 
-        // Movement Logic
-        window.addEventListener("keydown", (e) => {
-            const speed = 10;
-            if (e.key === "ArrowUp") myPos.y -= speed;
-            if (e.key === "ArrowDown") myPos.y += speed;
-            if (e.key === "ArrowLeft") myPos.x -= speed;
-            if (e.key === "ArrowRight") myPos.x += speed;
+        renderer.render(scene, camera);
+    }
+    animate();
 
-            // Keep inside canvas bounds
-            myPos.x = Math.max(20, Math.min(canvas.width - 20, myPos.x));
-            myPos.y = Math.max(20, Math.min(canvas.height - 20, myPos.y));
-            
-            draw();
-            socket.emit("move", myPos);
-        });
-
-        // Initial draw
-        requestAnimationFrame(draw);
-    </script>
+    // --- Window Resize Handling ---
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+</script>
 </body>
 </html>
