@@ -14,7 +14,7 @@
             padding: 10px 15px;
             border-radius: 8px;
             font-size: 1.1em;
-            pointer-events: none; /* Allows clicks to pass through */
+            pointer-events: none;
             z-index: 10;
         }
         #instructions {
@@ -31,8 +31,9 @@
             z-index: 10;
         }
     </style>
+    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.min.js"></script>
-    <script src="https://unpkg.com/cannon-es@0.20.0/dist/cannon-es.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/cannon-es@0.20.0/dist/cannon-es.min.js"></script>
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 </head>
 <body>
@@ -54,11 +55,11 @@
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.appendChild(renderer.domElement);
 
-    // --- PHYSICS WORLD (CANNON.js) ---
+    // --- PHYSICS WORLD (CANNON-ES) ---
     const world = new CANNON.World();
-    world.gravity.set(0, -9.82, 0); // Standard Earth gravity
-    world.broadphase = new CANNON.SAPBroadphase(world); // Optimize collision detection
-    world.allowSleep = true; // Objects can "sleep" to save CPU
+    world.gravity.set(0, -9.82, 0); 
+    world.broadphase = new CANNON.SAPBroadphase(world); 
+    world.allowSleep = true; 
 
     // --- LIGHTING ---
     const ambientLight = new THREE.AmbientLight(0x404040, 1);
@@ -81,7 +82,7 @@
     const groundShape = new CANNON.Plane();
     const groundBody = new CANNON.Body({ mass: 0, material: groundMaterial });
     groundBody.addShape(groundShape);
-    groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0); // Rotate to be flat
+    groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0); 
     world.addBody(groundBody);
 
     const groundMesh = new THREE.Mesh(
@@ -93,10 +94,10 @@
     scene.add(groundMesh);
 
     // --- GAME OBJECTS ---
-    const gameObjects = {}; // Stores all cars and the ball (both THREE.Mesh and CANNON.Body)
+    const gameObjects = {}; 
     let myId = null;
-    let myCarBody = null; // Our car's physics body
-    let myCarMesh = null; // Our car's 3D mesh
+    let myCarBody = null; 
+    let myCarMesh = null; 
 
     // The Game Ball
     const ballRadius = 2;
@@ -116,19 +117,16 @@
     scene.add(ballMesh);
     gameObjects['ball'] = { body: ballBody, mesh: ballMesh };
 
-    // --- PHYSICS MATERIALS (for realistic collisions) ---
+    // --- PHYSICS MATERIALS ---
     const carMaterial = new CANNON.Material("carMaterial");
     const ballGroundContact = new CANNON.ContactMaterial(ballMaterial, groundMaterial, {
-        friction: 0.6,
-        restitution: 0.7 // Bounciness
+        friction: 0.6, restitution: 0.7 
     });
     const carGroundContact = new CANNON.ContactMaterial(carMaterial, groundMaterial, {
-        friction: 0.8,
-        restitution: 0.1
+        friction: 0.8, restitution: 0.1
     });
     const carBallContact = new CANNON.ContactMaterial(carMaterial, ballMaterial, {
-        friction: 0.1,
-        restitution: 0.9 // Car kicking ball
+        friction: 0.1, restitution: 0.9 
     });
     world.addContactMaterial(ballGroundContact);
     world.addContactMaterial(carGroundContact);
@@ -140,8 +138,8 @@
         const carShape = new CANNON.Box(new CANNON.Vec3(carWidth/2, carHeight/2, carLength/2));
         const carBody = new CANNON.Body({ mass: 10, material: carMaterial });
         carBody.addShape(carShape);
-        carBody.linearDamping = 0.5; // Reduces sliding
-        carBody.angularDamping = 0.8; // Reduces spinning
+        carBody.linearDamping = 0.5; 
+        carBody.angularDamping = 0.8; 
         carBody.position.set(Math.random() * 20 - 10, 5, Math.random() * 20 - 10);
         world.addBody(carBody);
 
@@ -164,16 +162,14 @@
         myId = socket.id;
         playerStatusDiv.textContent = `Player: ${myId.substring(0, 6)}`;
         playerStatusDiv.style.color = "#4CAF50";
-        // Create our own car once connected
-        const { body, mesh } = createCar(myId, 0x007bff); // Blue for player
+        const { body, mesh } = createCar(myId, 0x007bff); 
         myCarBody = body;
         myCarMesh = mesh;
     });
 
     socket.on("player_connected", (id) => {
         if (!gameObjects[id] && id !== myId) {
-            console.log(`Player connected: ${id}`);
-            createCar(id, 0xff0000); // Red for opponents
+            createCar(id, 0xff0000); 
         }
     });
 
@@ -199,18 +195,18 @@
             world.removeBody(obj.body);
             scene.remove(obj.mesh);
             delete gameObjects[id];
-            console.log(`Player disconnected: ${id}`);
         }
     });
 
     // --- INPUT HANDLING ---
     const keys = {};
     window.addEventListener('keydown', (e) => {
-        keys[e.key] = true;
-        if (e.key === 'e' || e.key === 'E') toggleBallCam();
-        if (e.key === 't' || e.key === 'T') respawnMyCar();
+        const key = e.key.toLowerCase();
+        keys[key] = true;
+        if (key === 'e') toggleBallCam();
+        if (key === 't') respawnMyCar();
     });
-    window.addEventListener('keyup', (e) => keys[e.key] = false);
+    window.addEventListener('keyup', (e) => keys[e.key.toLowerCase()] = false);
 
     // --- CAR CONTROL ---
     const driveForce = 150;
@@ -218,46 +214,46 @@
     const jumpForce = 350;
     const flipTorque = 1000;
     const turnTorque = 60;
-    let canJump = true; // Prevents spam jumping
+    let canJump = true; 
     let lastFlipTime = 0;
-    const flipCooldown = 500; // ms
+    const flipCooldown = 500; 
 
     function applyCarControls() {
         if (!myCarBody) return;
 
         const forward = new CANNON.Vec3(0, 0, 1);
-        myCarBody.quaternion.vmult(forward, forward); // Get car's forward direction
+        myCarBody.quaternion.vmult(forward, forward); 
 
         // Drive (WASD)
-        let currentDriveForce = keys['Shift'] ? boostForce : driveForce;
-        if (keys['w'] || keys['W']) myCarBody.applyForce(forward.scale(currentDriveForce), myCarBody.position);
-        if (keys['s'] || keys['S']) myCarBody.applyForce(forward.scale(-currentDriveForce), myCarBody.position);
+        let currentDriveForce = keys['shift'] ? boostForce : driveForce;
+        if (keys['w']) myCarBody.applyForce(forward.scale(currentDriveForce), myCarBody.position);
+        if (keys['s']) myCarBody.applyForce(forward.scale(-currentDriveForce), myCarBody.position);
 
         // Turn (Left/Right)
-        if (keys['a'] || keys['A']) myCarBody.applyTorque(new CANNON.Vec3(0, turnTorque, 0));
-        if (keys['d'] || keys['D']) myCarBody.applyTorque(new CANNON.Vec3(0, -turnTorque, 0));
+        if (keys['a']) myCarBody.applyTorque(new CANNON.Vec3(0, turnTorque, 0));
+        if (keys['d']) myCarBody.applyTorque(new CANNON.Vec3(0, -turnTorque, 0));
         
-        // Jump (Space) - Basic ground check
+        // Jump (Space) 
         if (keys[' '] && canJump) {
             myCarBody.applyImpulse(new CANNON.Vec3(0, jumpForce, 0), myCarBody.position);
-            canJump = false; // Disable jumping until landing
+            canJump = false; 
         }
 
-        // Check if car is on ground
+        // Ground check
         myCarBody.addEventListener('collide', (e) => {
             if (e.body === groundBody) {
                 canJump = true;
             }
         });
 
-        // Flip (Q/E) - Horizontal roll
+        // Flip (Q/E)
         const now = performance.now();
-        if ((keys['q'] || keys['Q'] || keys['e'] || keys['E']) && (now - lastFlipTime > flipCooldown)) {
-             const sideAxis = new CANNON.Vec3(1, 0, 0); // Roll around X-axis
-             myCarBody.quaternion.vmult(sideAxis, sideAxis); // Get car's side direction
+        if ((keys['q'] || keys['e']) && (now - lastFlipTime > flipCooldown)) {
+             const sideAxis = new CANNON.Vec3(1, 0, 0); 
+             myCarBody.quaternion.vmult(sideAxis, sideAxis); 
 
-             if (keys['q'] || keys['Q']) myCarBody.applyTorque(sideAxis.scale(flipTorque));
-             if (keys['e'] || keys['E']) myCarBody.applyTorque(sideAxis.scale(-flipTorque));
+             if (keys['q']) myCarBody.applyTorque(sideAxis.scale(flipTorque));
+             if (keys['e']) myCarBody.applyTorque(sideAxis.scale(-flipTorque));
              lastFlipTime = now;
         }
     }
@@ -265,11 +261,11 @@
     function respawnMyCar() {
         if (myCarBody) {
             myCarBody.position.set(Math.random() * 30 - 15, 5, Math.random() * 30 - 15);
-            myCarBody.quaternion.set(0,0,0,1); // Reset rotation
+            myCarBody.quaternion.set(0,0,0,1); 
             myCarBody.velocity.set(0,0,0);
             myCarBody.angularVelocity.set(0,0,0);
         }
-        ballBody.position.set(0, ballRadius + 0.1, 0); // Reset ball too
+        ballBody.position.set(0, ballRadius + 0.1, 0); 
         ballBody.velocity.set(0,0,0);
         ballBody.angularVelocity.set(0,0,0);
     }
@@ -277,37 +273,34 @@
     // --- CAMERA LOGIC ---
     let isBallCam = false;
     const ballCamStatusDiv = document.getElementById("ballCamStatus");
-    const cameraOffset = new THREE.Vector3(-10, 8, 15); // Behind and above car
-    const ballCamOffset = new THREE.Vector3(0, 10, -20); // From ball, looking at player
+    const cameraOffset = new THREE.Vector3(-10, 8, 15); 
+    const ballCamOffset = new THREE.Vector3(0, 10, -20); 
 
     function updateCamera() {
         if (!myCarMesh || !ballMesh) return;
 
         if (isBallCam) {
-            // Ball Cam: Camera behind YOUR car, looking at the ball
             const targetPosition = new THREE.Vector3();
-            myCarMesh.getWorldPosition(targetPosition); // Get car's world position
-
-            const cameraTarget = ballMesh.position; // Look at the ball
+            myCarMesh.getWorldPosition(targetPosition); 
+            const cameraTarget = ballMesh.position; 
             
-            // Calculate camera position to be behind car
             const idealOffset = new THREE.Vector3().copy(ballCamOffset);
-            idealOffset.applyQuaternion(myCarMesh.ququaternion); // Rotate offset with car's rotation
+            // FIXED TYPO HERE:
+            idealOffset.applyQuaternion(myCarMesh.quaternion); 
             idealOffset.add(targetPosition);
 
-            camera.position.lerp(idealOffset, 0.1); // Smooth camera movement
+            camera.position.lerp(idealOffset, 0.1); 
             camera.lookAt(cameraTarget);
             
         } else {
-            // Car Cam: Camera behind and slightly above your car
             const targetPosition = new THREE.Vector3();
             myCarMesh.getWorldPosition(targetPosition);
 
             const idealOffset = new THREE.Vector3().copy(cameraOffset);
-            idealOffset.applyQuaternion(myCarMesh.quaternion); // Rotate offset with car's rotation
+            idealOffset.applyQuaternion(myCarMesh.quaternion); 
             idealOffset.add(targetPosition);
 
-            camera.position.lerp(idealOffset, 0.1); // Smooth camera movement
+            camera.position.lerp(idealOffset, 0.1); 
             camera.lookAt(targetPosition);
         }
     }
@@ -315,11 +308,10 @@
     function toggleBallCam() {
         isBallCam = !isBallCam;
         ballCamStatusDiv.textContent = `Ball Cam: ${isBallCam ? 'ON' : 'OFF'}`;
-        console.log(`Ball Cam: ${isBallCam ? 'ON' : 'OFF'}`);
     }
 
     // --- ANIMATION LOOP ---
-    const fixedTimeStep = 1 / 60; // physics updates at 60fps
+    const fixedTimeStep = 1 / 60; 
     let lastTime;
 
     function animate(time) {
@@ -327,11 +319,10 @@
 
         if (lastTime !== undefined) {
             const dt = (time - lastTime) / 1000;
-            world.step(fixedTimeStep, dt, 10); // Update physics
+            world.step(fixedTimeStep, dt, 10); 
         }
         lastTime = time;
 
-        // Sync Cannon.js bodies with Three.js meshes
         for (const id in gameObjects) {
             const obj = gameObjects[id];
             if (obj.body && obj.mesh) {
@@ -343,7 +334,6 @@
         applyCarControls();
         updateCamera();
 
-        // Send our car's state to the server
         if (myCarBody) {
             socket.emit("move", {
                 pos: myCarBody.position,
@@ -352,8 +342,8 @@
                 avel: myCarBody.angularVelocity
             });
         }
-        // Send ball state (only if we're the "host" for now, or a dedicated server later)
-        if (myId === socket.id) { // This is a simple way for one client to send ball data
+        
+        if (myId === socket.id) { 
              socket.emit("ball_move", {
                 pos: ballBody.position,
                 vel: ballBody.velocity,
@@ -365,7 +355,6 @@
     }
     animate();
 
-    // --- Window Resize Handling ---
     window.addEventListener('resize', () => {
         camera.aspect = window.innerWidth / window.innerHeight;
         camera.updateProjectionMatrix();
