@@ -15,7 +15,7 @@ const httpServer = http.createServer((req, res) => {
 // 2. Initialize Socket.io with CORS allowed for your GitHub Pages
 const io = new Server(httpServer, {
   cors: {
-    origin: "*", // Allows any website to connect (perfect for testing)
+    origin: "https://battle-ball-3.onrender.com", // Allows any website to connect (perfect for testing)
     methods: ["GET", "POST"]
   }
 });
