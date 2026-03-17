@@ -15,7 +15,7 @@ const httpServer = http.createServer((req, res) => {
 // 2. Initialize Socket.io with CORS allowed for your GitHub Pages
 const io = new Server(httpServer, {
   cors: {
-    origin: "https://moge14.github.io", // Allows any website to connect (perfect for testing)
+    origin: "*", // Allows any website to connect (perfect for testing)
     methods: ["GET", "POST"]
   }
 });
