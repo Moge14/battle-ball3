@@ -1,0 +1,25 @@
+const { Server } = require("socket.io");
+
+// Use the port provided by your host or default to 3000
+const PORT = process.env.PORT || 3000;
+
+const io = new Server({
+  cors: {
+    origin: "*", // In production, replace "*" with your GitHub Pages URL
+    methods: ["GET", "POST"]
+  }
+});
+
+io.on("connection", (socket) => {
+  console.log(`🚀 Player connected: ${socket.id}`);
+
+  // Send a 'welcome' message to the client
+  socket.emit("server_ready", "Battle Ball Server is Online!");
+
+  socket.on("disconnect", () => {
+    console.log(`❌ Player disconnected: ${socket.id}`);
+  });
+});
+
+io.listen(PORT);
+console.log(`Battle Ball server running on port ${PORT}`);
